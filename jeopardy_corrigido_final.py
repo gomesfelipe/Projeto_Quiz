@@ -8,12 +8,13 @@ from ttkbootstrap.widgets import Meter
 from playsound import playsound
 import colorsys
 import tkinter.font as tkFont
+import random
 
 class JeopardyGame:
     def __init__(self, root):
         self.root = root
         self.root.title("Jeopardy!")
-        self.custom_font = ("BIBURY", 16)
+        self.custom_font = ("Times New Roman", 16)
         self.perguntas = self.carregar_perguntas()
         self.grupos = self.inicializar_grupos()
         self.pontuacoes = {grupo: 0 for grupo in self.grupos}
@@ -22,6 +23,11 @@ class JeopardyGame:
         self.labels_categorias = []
         self.categorias = list(self.perguntas.keys())
         self.criar_interface()
+        self.total_perguntas = sum(len(valores) for valores in self.perguntas.values())
+        self.perguntas_por_rodada = len(self.categorias)  # Número fixo: 1 pergunta por categoria, mas jogador escolhe
+        self.perguntas_respondidas_na_rodada = 0
+        self.rodada_atual = 1
+        self.total_rodadas = self.total_perguntas // self.perguntas_por_rodada
 
     def carregar_perguntas(self):
         arquivo_excel = os.path.join(os.getcwd(), 'perguntas_jeopardy.xlsx')
@@ -100,7 +106,7 @@ class JeopardyGame:
 
         entry_resposta = tk.Entry(frame_direita, font=self.custom_font, bd=5, relief="solid", bg="#f0f0f0", highlightthickness=2)
         entry_resposta.pack(pady=10, ipadx=10, ipady=10)
-
+        entry_resposta.bind("<Return>", lambda event: confirmar())
         resposta = {}
 
         def confirmar():
@@ -119,6 +125,9 @@ class JeopardyGame:
                     meter.configure(bootstyle="warning")
                 else:
                     meter.configure(bootstyle="danger")
+                if tempo_limite <= 10 and tempo_limite > 0:
+                    self.tocar_som('534094__pbimal__clock-tick-01.flac')
+
                 if tempo_limite <= 0:
                     resposta["valor"] = None
                     popup.destroy()
@@ -130,6 +139,23 @@ class JeopardyGame:
         popup.wait_window()
 
         return resposta.get("valor")
+        
+    def mostrar_regras(self):
+        regras = (
+            "Regras do Jeopardy!\n\n"
+            "- Cada grupo escolhe uma pergunta entre as categorias disponíveis.\n"
+            "- Cada pergunta tem uma dificuldade (valor em pontos).\n"
+            "- Cada rodada é composta por um número fixo de perguntas respondidas.\n"
+            "- Após todas as perguntas da rodada serem respondidas, a próxima rodada começa.\n"
+            "- Responda corretamente para ganhar pontos!\n"
+            "- Vence o grupo que somar mais pontos no final do jogo.\n\n"
+            "Boa sorte!"
+        )
+        messagebox.showinfo("Regras do Jogo", regras)
+    def exibir_fim_rodada(self):
+        ranking = sorted(self.pontuacoes.items(), key=lambda x: x[1], reverse=True)
+        mensagem = "\n".join([f"{grupo}: {pontos} pts" for grupo, pontos in ranking])
+        messagebox.showinfo(f"Fim da Rodada {self.rodada_atual}", f"Ranking Parcial:\n\n{mensagem}")
 
     def mostrar_pergunta(self, categoria, valor, botao):
         pergunta, resposta_correta = self.perguntas[categoria][valor]
@@ -143,21 +169,43 @@ class JeopardyGame:
 
         resposta_usuario = self.abrir_pergunta_personalizada(f"Pergunta para {grupo}", pergunta)
 
+        def animar_botao(botao, cor_final):
+            original_color = botao.cget("bg")
+            def piscar(count):
+                if count > 0:
+                    cor = cor_final if count % 2 == 0 else original_color
+                    botao.config(bg=cor)
+                    botao.after(150, lambda: piscar(count - 1))
+                else:
+                    botao.config(bg=original_color)  # volta à cor original no final
+            piscar(4)  # número de piscadas (2 ciclos verde-vermelho)
+
         if resposta_usuario:
             if resposta_usuario.strip().lower() == resposta_correta.strip().lower():
                 self.tocar_som('acerto.mp3')
                 messagebox.showinfo("Resultado", "Correto!")
+                animar_botao(botao, "#28a745")  # verde para acerto
                 self.pontuacoes[grupo] += valor
             else:
                 self.tocar_som('erro.mp3')
                 messagebox.showinfo("Resultado", f"Incorreto!\nResposta correta: {resposta_correta}")
+                animar_botao(botao, "#dc3545")  # vermelho para erro
         else:
             self.tocar_som('erro.mp3')
             messagebox.showinfo("Resultado", "Nenhuma resposta fornecida.")
+            animar_botao(botao, "#dc3545")  # vermelho para resposta em branco
 
+        self.perguntas_respondidas_na_rodada += 1
         self.atualizar_pontuacoes()
         botao.config(state="disabled")
-        self.verificar_fim()
+        if self.perguntas_respondidas_na_rodada >= self.perguntas_por_rodada:
+            if self.rodada_atual < self.total_rodadas:
+                self.exibir_fim_rodada()
+                self.perguntas_respondidas_na_rodada = 0
+                self.rodada_atual += 1
+            else:
+                self.verificar_fim()
+
 
     def verificar_fim(self):
         botoes_ativos = [botao for botao in self.botoes if botao["state"] == "normal"]
@@ -190,10 +238,19 @@ class JeopardyGame:
 
             valores_ordenados = sorted(self.perguntas[categoria].keys())
             for j, valor in enumerate(valores_ordenados):
-                botao = tk.Button(frame_tabuleiro, text=str(valor), bg=cor_categoria, fg="white", font=self.custom_font)
+                botao = tk.Button(frame_tabuleiro, text=str(valor), bg=cor_categoria, fg="white", font=self.custom_font, cursor="hand2")
                 botao.grid(row=j+1, column=i, padx=5, pady=5, sticky="nsew")
                 self.botoes.append(botao)
                 botao.config(command=lambda c=categoria, v=valor, b=botao: self.mostrar_pergunta(c, v, b))
+
+                # --- Correção para hover por botão
+                cor_original = cor_categoria  # Salva a cor da categoria do botão atual
+                cor_hover = "#fecd01"
+
+                # Faz o botão lembrar sua própria cor
+                botao.bind("<Enter>", lambda e, b=botao, h=cor_hover: b.config(bg=h))
+                botao.bind("<Leave>", lambda e, b=botao, n=cor_original: b.config(bg=n))
+
 
         for i in range(len(self.categorias)):
             frame_tabuleiro.grid_columnconfigure(i, weight=1)
@@ -201,9 +258,19 @@ class JeopardyGame:
         total_linhas = max(len(self.perguntas[categoria]) for categoria in self.perguntas) + 2
         for i in range(total_linhas):
             frame_tabuleiro.grid_rowconfigure(i, weight=1)
-
+        # Botão de regras
+        btn_regras = tk.Button(frame_superior, text="?", font=("Arial", 16, "bold"), command=self.mostrar_regras, bg="#007acc", fg="white")
+        btn_regras.grid(row=0, column=len(self.grupos), padx=10, sticky="nsew")
     def gerar_cores(self, qtd):
-        return ['#%02x%02x%02x' % tuple(int(c*255) for c in colorsys.hsv_to_rgb(i/qtd, 0.7, 0.9)) for i in range(qtd)]
+        cores = []
+        for _ in range(qtd):
+            h = random.random()  # Hue aleatório
+            s = 0.7  # Saturação constante (cor viva)
+            v = 0.9  # Brilho constante (cor forte)
+            rgb = colorsys.hsv_to_rgb(h, s, v)
+            hex_color = '#%02x%02x%02x' % tuple(int(c*255) for c in rgb)
+            cores.append(hex_color)
+        return cores
 
 if __name__ == "__main__":
     root = ttk.Window(themename="superhero")
