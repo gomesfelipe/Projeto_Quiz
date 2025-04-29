@@ -8,6 +8,8 @@ import colorsys
 from playsound import playsound
 import ttkbootstrap as ttk
 from ttkbootstrap.widgets import Meter
+import unicodedata
+import difflib
 
 class TelaConfiguracao:
     def __init__(self, root):
@@ -46,7 +48,7 @@ class TelaConfiguracao:
 
         tk.Checkbutton(frame_esquerda, text="Penalizar Resposta Errada", variable=self.penalizar_erro, font=self.custom_font).grid(row=1, column=0, columnspan=3, sticky="w", pady=5)
         tk.Checkbutton(frame_esquerda, text="Penalizar ao Pular Pergunta", variable=self.penalizar_pular, font=self.custom_font).grid(row=2, column=0, columnspan=3, sticky="w", pady=5)
-        tk.Checkbutton(frame_esquerda, text="Incluir Perguntas Secretas", variable=self.perguntas_secretas, font=self.custom_font).grid(row=3, column=0, columnspan=3, sticky="w", pady=5)
+        tk.Checkbutton(frame_esquerda, text="Incluir Perguntas Secretas com bônus", variable=self.perguntas_secretas, font=self.custom_font).grid(row=3, column=0, columnspan=3, sticky="w", pady=5)
 
         self.frame_nomes_grupos = tk.Frame(frame_direita)
         self.frame_nomes_grupos.pack()
@@ -250,7 +252,21 @@ class JeopardyGame:
         popup.wait_window()
 
         return resposta
+    
+    def normalizar(self, texto):
+        texto = texto.strip().lower()
+        texto = unicodedata.normalize('NFD', texto)
+        texto = ''.join(c for c in texto if unicodedata.category(c) != 'Mn')  # Remove acentos
+        return texto
 
+    def remover_o_que_e(self, texto):
+        texto = texto.strip().lower()
+        if texto.startswith("o que e "):
+            return texto[8:]  # Remove "o que e " (sem acento)
+        if texto.startswith("o que sao "):
+            return texto[10:]  # Remove "o que sao " (sem acento)
+        return texto
+    
     def mostrar_pergunta(self, categoria, valor, botao):
         botao.config(state="disabled")
         pergunta, resposta_correta = self.perguntas[categoria][valor]
@@ -269,27 +285,35 @@ class JeopardyGame:
             piscar(4)
 
         if resposta_usuario["acao"] == "confirmar":
-            if resposta_usuario["valor"] and resposta_usuario["valor"].strip().lower() == resposta_correta.strip().lower():
-                self.tocar_som('acerto.mp3')
-                messagebox.showinfo("Resultado", "Correto!")
-                grupo_destino = self.escolher_grupo_para_pontuacao()
-                if grupo_destino:
-                    ganho = valor * 2 if is_pergunta_secreta else valor
-                    self.pontuacoes[grupo_destino] += ganho
-                    self.atualizar_pontuacoes()
-                animar_botao(botao, "#28a745")
-            else:
-                self.tocar_som('erro.mp3')
-                grupo_destino = self.escolher_grupo_para_pontuacao()
-                if grupo_destino:
-                    if self.penalizar_resposta_errada:
-                        penalidade = int(valor * self.valor_penalizacao)
-                        self.pontuacoes[grupo_destino] -= penalidade
-                    self.erros_grupos[grupo_destino] += 1
-                    self.atualizar_pontuacoes()
-                messagebox.showinfo("Resultado", f"Incorreto!\nResposta correta: {resposta_correta}")
-                animar_botao(botao, "#dc3545")
+            if resposta_usuario["valor"]:
+                resposta_aluno = self.normalizar(resposta_usuario["valor"])
+                resposta_correta_norm = self.normalizar(resposta_correta)
+                # Remove "o que é" ou "o que são" se houver
+                resposta_aluno = self.remover_o_que_e(resposta_aluno)
+                resposta_correta_norm = self.remover_o_que_e(resposta_correta_norm)
 
+                similaridade = difflib.SequenceMatcher(None, resposta_aluno, resposta_correta_norm).ratio()
+
+                if similaridade >= 0.8:  # >= 80% de similaridade, considera correto
+                    self.tocar_som('acerto.mp3')
+                    messagebox.showinfo("Resultado", "Correto!")
+                    grupo_destino = self.escolher_grupo_para_pontuacao()
+                    if grupo_destino:
+                        ganho = valor * 2 if is_pergunta_secreta else valor
+                        self.pontuacoes[grupo_destino] += ganho
+                        self.atualizar_pontuacoes()
+                    animar_botao(botao, "#28a745")
+                else:
+                    self.tocar_som('erro.mp3')
+                    grupo_destino = self.escolher_grupo_para_pontuacao()
+                    if grupo_destino:
+                        if self.penalizar_resposta_errada:
+                            penalidade = int(valor * self.valor_penalizacao)
+                            self.pontuacoes[grupo_destino] -= penalidade
+                        self.erros_grupos[grupo_destino] += 1
+                        self.atualizar_pontuacoes()
+                    messagebox.showinfo("Resultado", f"Incorreto!\nResposta correta: {resposta_correta}")
+                    animar_botao(botao, "#dc3545")
         elif resposta_usuario["acao"] in ["pular", "tempo"]:
             grupo_destino = self.escolher_grupo_para_pontuacao()
             if grupo_destino:
@@ -300,7 +324,7 @@ class JeopardyGame:
                 self.atualizar_pontuacoes()
             messagebox.showinfo("Pular", "Pergunta pulada ou tempo esgotado.")
             animar_botao(botao, "#6c757d")
-
+            
     def gerar_cores(self, qtd):
         cores = []
         for _ in range(qtd):
