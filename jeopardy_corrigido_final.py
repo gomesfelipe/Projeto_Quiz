@@ -106,7 +106,7 @@ class JeopardyGame:
         self.criar_interface()
         
     def carregar_perguntas(self):
-        arquivo_excel = os.path.join(os.getcwd(), 'perguntas_jeopardy.xlsx')
+        arquivo_excel = os.path.join(os.getcwd(), 'C:/Users/sn1075293/Documents/Projeto_Quiz/perguntas_jeopardy.xlsx')
         try:
             df = pd.read_excel(arquivo_excel)
         except Exception as e:
@@ -119,10 +119,59 @@ class JeopardyGame:
             valor = int(linha['Valor'])
             pergunta = linha['Pergunta']
             resposta = linha['Resposta']
+            alternativas = linha.get('Alternativas', None)
+            if pd.notna(alternativas):
+                alternativas = [alt.strip() for alt in alternativas.split(';')]
+            else:
+                alternativas = None
             if categoria not in perguntas:
                 perguntas[categoria] = {}
-            perguntas[categoria][valor] = (pergunta, resposta)
+            perguntas[categoria][valor] = (pergunta, resposta, alternativas)
         return perguntas
+
+    def abrir_pergunta_com_alternativas(self, titulo, pergunta, alternativas, tempo_limite=30):
+        popup = tk.Toplevel(self.root)
+        popup.title(titulo)
+        popup.geometry("800x500")
+        popup.configure(bg="white")
+        popup.grab_set()
+
+        resposta = {"valor": None, "acao": None}
+
+        tk.Label(popup, text=pergunta, font=self.custom_font, bg="white", wraplength=750).pack(pady=20)
+
+        var_escolha = tk.StringVar()
+
+        for alt in alternativas:
+            tk.Radiobutton(popup, text=alt, variable=var_escolha, value=alt, font=self.custom_font, bg="white").pack(anchor="w", padx=20)
+
+        def confirmar():
+            resposta["valor"] = var_escolha.get()
+            resposta["acao"] = "confirmar"
+            popup.destroy()
+
+        def pular():
+            resposta["valor"] = None
+            resposta["acao"] = "pular"
+            popup.destroy()
+
+        ttk.Button(popup, text="Confirmar", command=confirmar).pack(pady=10)
+        ttk.Button(popup, text="Pular", command=pular).pack()
+
+        # Timer opcional
+        def countdown():
+            nonlocal tempo_limite
+            if resposta["acao"] is None:
+                if tempo_limite <= 0:
+                    resposta["acao"] = "tempo"
+                    popup.destroy()
+                else:
+                    tempo_limite -= 1
+                    popup.after(1000, countdown)
+
+        countdown()
+        popup.wait_window()
+        return resposta
 
     def tocar_som(self, nome_arquivo):
         caminho_completo = os.path.join(os.getcwd(), nome_arquivo)
@@ -269,10 +318,13 @@ class JeopardyGame:
     
     def mostrar_pergunta(self, categoria, valor, botao):
         botao.config(state="disabled")
-        pergunta, resposta_correta = self.perguntas[categoria][valor]
+        pergunta, resposta_correta, alternativas = self.perguntas[categoria][valor]
         is_pergunta_secreta = self.perguntas_secretas and random.random() < 0.2
-        resposta_usuario = self.abrir_pergunta_personalizada("Pergunta" + (" SECRETA" if is_pergunta_secreta else ""), pergunta)
 
+        if alternativas:
+            resposta_usuario = self.abrir_pergunta_com_alternativas("Pergunta", pergunta, alternativas)
+        else:
+            resposta_usuario = self.abrir_pergunta_personalizada("Pergunta", pergunta)
         def animar_botao(botao, cor_final):
             original_color = botao.cget("bg")
             def piscar(count):
